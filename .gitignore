@@ -1,1 +1,5 @@
 .timetracker
+venv
+.temp_vidit/*.mp4
+output/*.mp4
+.env
