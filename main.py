@@ -2,6 +2,7 @@ import concurrent.futures
 import multiprocessing
 import os
 import random
+import ssl
 import subprocess
 import datetime
 
@@ -57,27 +58,29 @@ mc_available = [
 if not os.path.exists(TEMP_DIR):
     os.makedirs(TEMP_DIR)
 
-def cleanup():
+def cleanup(code_str: str):
     print("Cleaning up...")
     if os.path.exists(TEMP_DIR):
         if len(os.listdir(TEMP_DIR)) > 0:
             for file in os.listdir(TEMP_DIR):
-                os.remove(os.path.join(TEMP_DIR, file))
-        os.rmdir(TEMP_DIR)
-
+                if code_str in file:
+                    os.remove(os.path.join(TEMP_DIR, file))
 
 def print_green(text: str):
     print(f"\n==============================\n\n\033[92m{text}\033[00m\n\n")
 
 
 
-def cut_video_to_chunks(source_video_path: str, chunk_duration_seconds: int, temp: str = None):
+def cut_video_to_chunks(code_str, source_video_path: str, chunk_duration_seconds: int, temp: str = None, scale_str: str = "1280:-2"):
     if not temp:
         temp = TEMP_DIR
     if not os.path.exists(temp):
         os.makedirs(temp)
 
-    cmd = f"ffmpeg -i {source_video_path} -c copy -f segment -segment_time {chunk_duration_seconds} {temp}/_s_%05d.mp4"
+    if not scale_str:
+        cmd = f"ffmpeg -i {source_video_path} -c copy -f segment -segment_time {chunk_duration_seconds} {temp}/{code_str}_s_%05d.mp4"
+    else:
+        cmd = f"ffmpeg -i {source_video_path} -vf scale={scale_str} -f segment -segment_time {chunk_duration_seconds} {temp}/{code_str}_s_%05d.mp4"
 
     try:
         output = subprocess.check_output(cmd, shell=True)
@@ -87,15 +90,16 @@ def cut_video_to_chunks(source_video_path: str, chunk_duration_seconds: int, tem
         raise e
 
     chunk_filenames = os.listdir(temp)
-    chunk_paths = [os.path.join(temp, chunk_filename) for chunk_filename in chunk_filenames]
+    chunk_paths = [os.path.join(temp, chunk_filename) for chunk_filename in chunk_filenames if code_str in chunk_filename]
     return chunk_paths
 
 
 
 def blend_video_frames_of_video_object_multiproc(
+    code_str: str,
     source_video_path: str,
     export_path: str,
-    pts_factor: float = 62.2,
+    pts_factor: float = 2.0,
     fps: int = 25,
     mb_size: int = 16,
     search_param: int = 400,
@@ -111,11 +115,12 @@ def blend_video_frames_of_video_object_multiproc(
 ):
     
     if use_random_params:
+        pts_factor = random.randint(1, 30)
         #mb_size = str(int(random.randint(4, 16)))
         mb_size = str(int(random.randint(4, 16)))
         #search_param = random.choice([4, 100, 400, 800])
-        search_param = random.choice([4, 100])
-        vsbmc = random.choice([0, 1])
+        search_param = random.choice([40, 1000])
+        vsbmc = 0
         scd = "none"
         mc_mode = random.choice(["aobmc", "obmc"])
         me_mode = random.choice(["bidir", "bilat"])
@@ -141,6 +146,12 @@ def blend_video_frames_of_video_object_multiproc(
     """
     print_green(params_for_print)
 
+    with open(f"{export_path.split('.')[0]}.txt", "w+") as f:
+        f.write(params_for_print)
+        f.write("\n")
+        f.write(f"export_path: {export_path}")
+        f.write("\n\n")
+
     if not os.path.exists(export_path.split('.')[0]):
         os.makedirs(export_path.split('.')[0])
     
@@ -150,7 +161,7 @@ def blend_video_frames_of_video_object_multiproc(
             export_path = export_path.split('.')[0] + f"_{n}.mp4"
             n += 1
 	
-    chunks = cut_video_to_chunks(source_video_path, chunk_duration_seconds)
+    chunks = cut_video_to_chunks(code_str, source_video_path, chunk_duration_seconds)
     
     output_paths = []
     with concurrent.futures.ProcessPoolExecutor(max_workers=AVAILABLE_PROCESSORS) as executor:
@@ -175,16 +186,24 @@ def blend_video_frames_of_video_object_multiproc(
         print(f"Error concatenating video: {e}")
         raise e
     
-    cleanup()
+    cleanup(code_str)
 
     print_green(f"Finished processing video: {source_video_path} to {export_path}")
 
 
+
+
 if __name__ == "__main__":
     source_video_path = os.environ.get("SOURCE_VIDEO_PATH")
-    export_path = "output.mp4"
-    try:
-        blend_video_frames_of_video_object_multiproc(source_video_path, export_path, use_random_params=False)
-    finally:
-        cleanup()
 
+    for i in range(10):
+        random_name = ssl.RAND_bytes(10).hex()
+        export_path = f"outputs/output_{random_name}.mp4"
+        try:
+            blend_video_frames_of_video_object_multiproc(random_name, source_video_path, export_path, use_random_params=True)
+
+        except Exception as e:
+            print(f"Error: {e}")
+            cleanup(code_str=random_name)
+        finally:
+            cleanup(code_str=random_name)
